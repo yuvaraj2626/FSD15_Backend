@@ -1,0 +1,78 @@
+╔══════════════════════════════════════════════════════════════════╗
+║          COMPLAINT MANAGEMENT SYSTEM - QUICK COMMANDS            ║
+╚══════════════════════════════════════════════════════════════════╝
+
+📍 PROJECT LOCATION
+   c:\users\yuvar\FSD15_MERNSTACK
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 TO START THE PROJECT
+
+   ▶ EASIEST WAY (Windows):
+     Double-click: START.bat
+
+   ▶ USING COMMAND LINE:
+     cd c:\users\yuvar\FSD15_MERNSTACK
+     npm run dev
+
+   ▶ SEPARATE TERMINALS:
+     Terminal 1: npm run server
+     Terminal 2: cd client && npm start
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🌐 ACCESS THE APP
+
+   Frontend:  http://localhost:3000
+   Backend:   http://localhost:5000
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔑 LOGIN CREDENTIALS
+
+   👤 USER
+      Email:    user@demo.com
+      Password: user123
+
+   🛠️ SUPPORT
+      Email:    support@demo.com
+      Password: support123
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🛑 TO STOP THE SERVERS
+
+   Press: Ctrl + C (in each terminal)
+   Or: Close the terminal windows
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 TROUBLESHOOTING
+
+   Port in use?
+   → npx kill-port 5000
+   → npx kill-port 3000
+
+   MongoDB error?
+   → node test-connection.js
+
+   Missing modules?
+   → npm install
+   → cd client && npm install
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 DOCUMENTATION FILES
+
+   ⭐ HOW_TO_RUN.md        - Detailed run instructions
+   📖 README.md            - Full documentation
+   🚀 QUICKSTART.md        - Quick start guide
+   🔧 MONGODB_SETUP.md     - Database setup
+   📋 PROJECT_SUMMARY.md   - Feature list
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✨ THAT'S IT! JUST RUN: npm run dev
+
+╚══════════════════════════════════════════════════════════════════╝
