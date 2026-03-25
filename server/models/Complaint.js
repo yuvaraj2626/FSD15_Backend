@@ -44,6 +44,10 @@ const complaintSchema = new mongoose.Schema({
     },
     closedAt: {
         type: Date
+    },
+    attachmentUrl: {
+        type: String,
+        default: null
     }
 });
 

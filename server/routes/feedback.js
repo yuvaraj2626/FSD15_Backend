@@ -94,6 +94,46 @@ router.get('/', auth, async (req, res) => {
     }
 });
 
+// @route   PUT /api/feedback/:id
+// @desc    Update existing feedback (USER only, must own the feedback)
+// @access  Private (USER)
+router.put('/:id', [
+    auth,
+    authorize('USER'),
+    body('rating').optional().isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
+    body('comment').optional().trim().notEmpty().withMessage('Comment cannot be empty')
+], async (req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ errors: errors.array() });
+        }
+
+        const feedback = await Feedback.findById(req.params.id);
+        if (!feedback) {
+            return res.status(404).json({ message: 'Feedback not found' });
+        }
+
+        // Only the owner can update their feedback
+        if (feedback.userId.toString() !== req.userId) {
+            return res.status(403).json({ message: 'You can only update your own feedback' });
+        }
+
+        const { rating, comment } = req.body;
+        if (rating !== undefined) feedback.rating = rating;
+        if (comment !== undefined) feedback.comment = comment;
+
+        await feedback.save();
+        await feedback.populate('complaintId', 'title status');
+        await feedback.populate('userId', 'name email');
+
+        res.json({ message: 'Feedback updated successfully', feedback });
+    } catch (error) {
+        console.error('Update feedback error:', error);
+        res.status(500).json({ message: 'Server error while updating feedback' });
+    }
+});
+
 // @route   GET /api/feedback/complaint/:complaintId
 // @desc    Get feedback for a specific complaint
 // @access  Private

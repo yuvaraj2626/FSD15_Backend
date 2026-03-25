@@ -39,3 +39,6 @@ coverage/
 .cache/
 temp/
 tmp/
+
+# User uploaded files
+server/uploads/
