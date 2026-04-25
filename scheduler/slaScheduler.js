@@ -1,183 +1,197 @@
 /**
- * SLA Scheduler
- * Runs periodic checks for SLA violations and escalates complaints
- * Can be triggered via node-cron or setInterval
+ * ═══════════════════════════════════════════════════════════════
+ * SLA Scheduler — Production-Grade Auto-Escalation Engine
+ * ═══════════════════════════════════════════════════════════════
+ *
+ * Uses node-cron for reliable scheduling.
+ * Fallback to setInterval if node-cron is unavailable.
+ *
+ * Default: Checks for SLA violations every 5 minutes.
  */
 
 const { checkAndEscalateDueComplaints } = require('../utils/slaHelper');
 
-let schedulerInstance = null;
+let cronJob = null;
+let intervalInstance = null;
 let isRunning = false;
+let useCron = false;
+
+// Scheduler statistics
+const stats = {
+    lastRun: null,
+    nextRun: null,
+    totalRuns: 0,
+    totalEscalations: 0,
+    errors: [],
+    startedAt: null
+};
 
 /**
- * Initialize the SLA scheduler with an interval (in milliseconds)
- * Default: runs every 5 minutes
- * @param {Number} intervalMs - Interval in milliseconds (default: 5 * 60 * 1000)
- * @returns {Object} - { start, stop, status }
+ * Initialize and start the SLA scheduler.
+ *
+ * Tries to use node-cron first (preferred), falls back to setInterval.
+ *
+ * @param {Number} intervalMs - Interval in milliseconds (default: 5 min)
+ * @returns {Object} - Controller with start, stop, status, forceRun
  */
 function initializeScheduler(intervalMs = 5 * 60 * 1000) {
-    const scheduler = {
-        intervalMs,
-        lastRun: null,
-        nextRun: null,
-        totalRuns: 0,
-        totalEscalations: 0,
-        errors: []
-    };
-
     return {
-        start: () => startScheduler(scheduler, intervalMs),
+        start: () => startScheduler(intervalMs),
         stop: () => stopScheduler(),
-        status: () => getSchedulerStatus(scheduler),
-        forceRun: () => runEscalationCheck(scheduler)
+        status: () => getSchedulerStatus(intervalMs),
+        forceRun: () => runEscalationCheck()
     };
 }
 
 /**
- * Start the scheduler
- * @param {Object} scheduler - Scheduler state object
- * @param {Number} intervalMs - Interval in milliseconds
+ * Start the scheduler.
  */
-function startScheduler(scheduler, intervalMs) {
+function startScheduler(intervalMs) {
     if (isRunning) {
         console.warn('[SLA Scheduler] Scheduler is already running');
-        return;
+        return { message: 'Already running' };
     }
 
     isRunning = true;
-    console.log(`[SLA Scheduler] Starting SLA checker (interval: ${intervalMs}ms)`);
+    stats.startedAt = new Date();
+
+    // Try node-cron first
+    try {
+        const cron = require('node-cron');
+
+        // Convert intervalMs to cron expression
+        const intervalMinutes = Math.max(1, Math.round(intervalMs / 60000));
+        const cronExpression = `*/${intervalMinutes} * * * *`;
+
+        cronJob = cron.schedule(cronExpression, async () => {
+            await runEscalationCheck();
+        }, {
+            scheduled: true,
+            timezone: process.env.TZ || 'UTC'
+        });
+
+        useCron = true;
+        console.log(`[SLA Scheduler] ✅ Started with node-cron (every ${intervalMinutes} min): ${cronExpression}`);
+    } catch (cronError) {
+        // Fallback to setInterval
+        console.warn('[SLA Scheduler] node-cron not available, using setInterval fallback');
+
+        intervalInstance = setInterval(async () => {
+            await runEscalationCheck();
+        }, intervalMs);
+
+        useCron = false;
+        console.log(`[SLA Scheduler] ✅ Started with setInterval (every ${(intervalMs / 60000).toFixed(1)} min)`);
+    }
 
     // Run immediately on start
-    runEscalationCheck(scheduler);
-
-    // Set up interval
-    schedulerInstance = setInterval(() => {
-        runEscalationCheck(scheduler);
-    }, intervalMs);
+    setTimeout(() => runEscalationCheck(), 2000);
 
     return {
         message: 'SLA Scheduler started',
-        interval: `${(intervalMs / 1000 / 60).toFixed(1)} minutes`,
-        nextCheck: new Date(Date.now() + intervalMs)
+        engine: useCron ? 'node-cron' : 'setInterval',
+        interval: `${(intervalMs / 60000).toFixed(1)} minutes`,
+        startedAt: stats.startedAt
     };
 }
 
 /**
- * Stop the scheduler
+ * Stop the scheduler.
  */
 function stopScheduler() {
     if (!isRunning) {
         console.warn('[SLA Scheduler] Scheduler is not running');
-        return;
+        return { message: 'Not running' };
     }
 
-    if (schedulerInstance) {
-        clearInterval(schedulerInstance);
-        schedulerInstance = null;
+    if (cronJob) {
+        cronJob.stop();
+        cronJob = null;
+    }
+    if (intervalInstance) {
+        clearInterval(intervalInstance);
+        intervalInstance = null;
     }
 
     isRunning = false;
-    console.log('[SLA Scheduler] SLA Scheduler stopped');
+    console.log('[SLA Scheduler] ⏹️ SLA Scheduler stopped');
 
-    return { message: 'SLA Scheduler stopped' };
+    return {
+        message: 'SLA Scheduler stopped',
+        totalRuns: stats.totalRuns,
+        totalEscalations: stats.totalEscalations
+    };
 }
 
 /**
- * Run a single escalation check
- * @param {Object} scheduler - Scheduler state object
+ * Run a single escalation check cycle.
  */
-async function runEscalationCheck(scheduler) {
-    try {
-        const startTime = Date.now();
-        scheduler.lastRun = new Date();
-        scheduler.nextRun = new Date(startTime + scheduler.intervalMs);
+async function runEscalationCheck() {
+    const startTime = Date.now();
+    stats.lastRun = new Date();
 
-        console.log(`\n[SLA Scheduler] Running escalation check at ${scheduler.lastRun.toISOString()}`);
+    try {
+        console.log(`\n[SLA Scheduler] ─── Escalation check at ${stats.lastRun.toISOString()} ───`);
 
         const result = await checkAndEscalateDueComplaints();
 
-        scheduler.totalRuns++;
-        scheduler.totalEscalations += result.escalatedCount;
+        stats.totalRuns++;
+        stats.totalEscalations += result.escalatedCount;
 
         if (result.escalatedCount > 0) {
-            console.log(`[SLA Scheduler] ✓ Escalated ${result.escalatedCount} complaint(s)`);
-            result.details.forEach(complaint => {
+            console.log(`[SLA Scheduler] 🚨 Escalated ${result.escalatedCount} complaint(s):`);
+            result.details.forEach(detail => {
                 console.log(
-                    `  - ID: ${complaint.complaintId}, Title: "${complaint.title}", ` +
-                    `Priority: ${complaint.priority} → ${complaint.newPriority}, ` +
-                    `Overdue: ${complaint.overdueBy}`
+                    `  → ID: ${detail.complaintId}, ` +
+                    `"${detail.title}", ` +
+                    `${detail.priority} → ${detail.newPriority}, ` +
+                    `Level ${detail.escalationLevel}, ` +
+                    `Assigned: ${detail.assignedTo}, ` +
+                    `Overdue: ${detail.overdueBy}`
                 );
             });
         } else {
-            console.log('[SLA Scheduler] ✓ No complaints exceeding SLA');
+            console.log('[SLA Scheduler] ✅ No SLA violations found');
         }
 
         const duration = Date.now() - startTime;
-        console.log(`[SLA Scheduler] Check completed in ${duration}ms\n`);
+        console.log(`[SLA Scheduler] ─── Completed in ${duration}ms ───\n`);
 
         return result;
     } catch (error) {
-        console.error('[SLA Scheduler] Error during escalation check:', error.message);
-        scheduler.errors.push({
+        console.error('[SLA Scheduler] ❌ Error during escalation check:', error.message);
+        stats.errors.push({
             timestamp: new Date(),
             error: error.message
         });
 
         // Keep only last 10 errors
-        if (scheduler.errors.length > 10) {
-            scheduler.errors.shift();
+        if (stats.errors.length > 10) {
+            stats.errors.shift();
         }
 
-        throw error;
+        return { escalatedCount: 0, details: [], error: error.message };
     }
 }
 
 /**
- * Get current scheduler status
- * @param {Object} scheduler - Scheduler state object
- * @returns {Object} - Scheduler status information
+ * Get scheduler status for monitoring endpoints.
  */
-function getSchedulerStatus(scheduler) {
+function getSchedulerStatus(intervalMs) {
     return {
         isRunning,
-        intervalMs: scheduler.intervalMs,
-        interval: `${(scheduler.intervalMs / 1000 / 60).toFixed(1)} minutes`,
-        lastRun: scheduler.lastRun,
-        nextRun: scheduler.nextRun,
-        totalRuns: scheduler.totalRuns,
-        totalEscalations: scheduler.totalEscalations,
-        recentErrors: scheduler.errors.slice(-5)
+        engine: useCron ? 'node-cron' : 'setInterval',
+        intervalMs: intervalMs || (5 * 60 * 1000),
+        interval: `${((intervalMs || 5 * 60 * 1000) / 60000).toFixed(1)} minutes`,
+        startedAt: stats.startedAt,
+        lastRun: stats.lastRun,
+        totalRuns: stats.totalRuns,
+        totalEscalations: stats.totalEscalations,
+        recentErrors: stats.errors.slice(-5),
+        uptime: stats.startedAt
+            ? `${Math.round((Date.now() - stats.startedAt.getTime()) / 60000)} minutes`
+            : null
     };
-}
-
-/**
- * Alternative: Create a cron-based scheduler (requires node-cron package)
- * Uncomment and use if you prefer cron scheduling
- */
-function initializeCronScheduler() {
-    // To use this, install node-cron: npm install node-cron
-    // const cron = require('node-cron');
-    //
-    // const cronScheduler = {
-    //     // Run every 5 minutes
-    //     task: cron.schedule('*/5 * * * *', async () => {
-    //         console.log('[SLA Cron] Running escalation check');
-    //         try {
-    //             const result = await checkAndEscalateDueComplaints();
-    //             if (result.escalatedCount > 0) {
-    //                 console.log(`[SLA Cron] Escalated ${result.escalatedCount} complaint(s)`);
-    //             }
-    //         } catch (error) {
-    //             console.error('[SLA Cron] Error:', error.message);
-    //         }
-    //     }),
-    //     stop: () => {
-    //         cronScheduler.task.stop();
-    //         console.log('[SLA Cron] Scheduler stopped');
-    //     }
-    // };
-    //
-    // return cronScheduler;
 }
 
 module.exports = {
@@ -186,6 +200,5 @@ module.exports = {
     stopScheduler,
     runEscalationCheck,
     getSchedulerStatus,
-    isSchedulerRunning: () => isRunning,
-    initializeCronScheduler
+    isSchedulerRunning: () => isRunning
 };

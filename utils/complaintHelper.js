@@ -220,6 +220,85 @@ const getComplaintStats = async (userId = null, userRole = null) => {
     }
 };
 
+/**
+ * Smart Auto-Assignment
+ * 
+ * Automatically assigns a complaint to the support agent with the LEAST
+ * active workload (fewest non-closed/resolved complaints).
+ * 
+ * Assignment priority:
+ *   1. Support agents with 0 active complaints
+ *   2. Support agent with fewest active complaints
+ * 
+ * @param {Object} complaint - Mongoose complaint document (must already be saved)
+ * @returns {Object|null} - The assigned support user, or null if none available
+ */
+const autoAssignComplaint = async (complaint) => {
+    try {
+        // Get all non-blocked SUPPORT users
+        const supportUsers = await User.find({ role: 'SUPPORT', blocked: { $ne: true } })
+            .select('_id name email')
+            .lean();
+
+        if (supportUsers.length === 0) {
+            console.log('⚠️  No support staff available for auto-assignment');
+            return null;
+        }
+
+        // Count active complaints per support agent
+        // Active = anything not RESOLVED or CLOSED
+        const workload = await Complaint.aggregate([
+            {
+                $match: {
+                    assignedTo: { $in: supportUsers.map(u => u._id) },
+                    status: { $nin: ['RESOLVED', 'CLOSED'] }
+                }
+            },
+            {
+                $group: {
+                    _id: '$assignedTo',
+                    activeCount: { $sum: 1 }
+                }
+            }
+        ]);
+
+        // Build a workload map: userId → activeCount
+        const workloadMap = new Map();
+        workload.forEach(w => {
+            workloadMap.set(w._id.toString(), w.activeCount);
+        });
+
+        // Find the agent with the least workload
+        let bestAgent = null;
+        let minWorkload = Infinity;
+
+        for (const agent of supportUsers) {
+            const count = workloadMap.get(agent._id.toString()) || 0;
+            if (count < minWorkload) {
+                minWorkload = count;
+                bestAgent = agent;
+            }
+        }
+
+        if (!bestAgent) return null;
+
+        // Assign the complaint
+        complaint.assignedTo = bestAgent._id;
+        complaint.assignedAt = new Date();
+        if (complaint.status === 'OPEN') {
+            complaint.status = 'ASSIGNED';
+        }
+        await complaint.save();
+
+        console.log(`🤖 Auto-assigned complaint ${complaint._id} → ${bestAgent.name} (workload: ${minWorkload})`);
+
+        return bestAgent;
+    } catch (error) {
+        console.error('❌ Auto-assignment error:', error.message);
+        return null;
+    }
+};
+
 module.exports = {
     buildComplaintQuery,
     isValidStatusTransition,
@@ -227,5 +306,6 @@ module.exports = {
     assignComplaint,
     reassignComplaint,
     unassignComplaint,
-    getComplaintStats
+    getComplaintStats,
+    autoAssignComplaint
 };

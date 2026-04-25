@@ -168,11 +168,11 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // @route   PUT /api/complaints/:id
-// @desc    Update complaint status (SUPPORT only)
-// @access  Private (SUPPORT)
+// @desc    Update complaint status (SUPPORT, ADMIN)
+// @access  Private (SUPPORT, ADMIN)
 router.put('/:id', [
     auth,
-    authorize('SUPPORT'),
+    authorize('SUPPORT', 'ADMIN'),
     body('status').optional().isIn(['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']).withMessage('Invalid status')
 ], async (req, res) => {
     try {
@@ -191,6 +191,9 @@ router.put('/:id', [
         const oldStatus = complaint.status;
 
         if (status) {
+            if (status === 'CLOSED' && !complaint.completionProofUrl) {
+                return res.status(400).json({ message: 'Completion proof is required before closing the complaint' });
+            }
             complaint.status = status;
             if (status === 'CLOSED') {
                 complaint.closedAt = Date.now();
@@ -250,6 +253,53 @@ router.put('/:id', [
     } catch (error) {
         console.error('Update complaint error:', error);
         res.status(500).json({ message: 'Server error while updating complaint' });
+    }
+});
+
+// @route   POST /api/complaints/:id/proof
+// @desc    Upload completion proof image (SUPPORT, ADMIN)
+// @access  Private (SUPPORT, ADMIN)
+router.post('/:id/proof', [
+    auth,
+    authorize('SUPPORT', 'ADMIN'),
+    upload.single('proof')
+], async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'Proof file is required' });
+        }
+
+        const complaint = await Complaint.findById(req.params.id);
+        if (!complaint) {
+            return res.status(404).json({ message: 'Complaint not found' });
+        }
+
+        const completionProofUrl = `/uploads/${req.file.filename}`;
+        complaint.completionProofUrl = completionProofUrl;
+        complaint.completionProofUploadedAt = Date.now();
+        complaint.completionProofUploadedBy = req.userId;
+
+        await complaint.save();
+        await complaint.populate('userId', 'name email');
+        await complaint.populate('assignedTo', 'name email');
+
+        await new Comment({
+            complaintId: complaint._id,
+            senderId: req.userId,
+            userId: req.userId,
+            senderRole: req.user.role,
+            message: 'Completion proof uploaded',
+            text: 'Completion proof uploaded',
+            type: 'system'
+        }).save();
+
+        res.json({
+            message: 'Completion proof uploaded successfully',
+            complaint
+        });
+    } catch (error) {
+        console.error('Upload proof error:', error);
+        res.status(500).json({ message: 'Server error while uploading proof' });
     }
 });
 

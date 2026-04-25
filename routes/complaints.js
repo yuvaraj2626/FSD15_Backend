@@ -14,13 +14,17 @@ const {
     assignComplaint,
     reassignComplaint,
     unassignComplaint,
-    getComplaintStats
+    getComplaintStats,
+    autoAssignComplaint
 } = require('../utils/complaintHelper');
 const {
     calculateSLADeadline,
+    getSLADurationMinutes,
     getSLAStatus,
     getSLAMetrics,
-    updateSLADeadlineForPriorityChange
+    updateSLADeadlineForPriorityChange,
+    SLA_DEFINITIONS,
+    getTimeUntilSLADeadline
 } = require('../utils/slaHelper');
 const {
     logComplaintCreated,
@@ -34,6 +38,14 @@ const {
     logComplaintDeleted
 } = require('../utils/auditLogger');
 const { detectPriority } = require('../utils/priorityDetector');
+const {
+    sendComplaintCreatedEmail,
+    sendComplaintResolvedEmail,
+    sendComplaintAssignedEmail,
+    sendSupportTeamNewComplaintEmail,
+    sendComplaintClosedEmail
+} = require('../utils/emailService');
+const { complaintLimiter } = require('../middleware/rateLimiter');
 
 // @route   POST /api/complaints
 // @desc    Create a new complaint (USER only)
@@ -41,6 +53,7 @@ const { detectPriority } = require('../utils/priorityDetector');
 router.post('/', [
     verifyToken,
     authorize('USER'),
+    complaintLimiter,
     upload.single('attachment'),
     body('title').trim().notEmpty().withMessage('Title is required'),
     body('description').trim().notEmpty().withMessage('Description is required'),
@@ -65,6 +78,8 @@ router.post('/', [
         const detectedPriority = priorityDetection.priority;
         const now = new Date();
 
+        const slaDuration = getSLADurationMinutes(detectedPriority);
+
         const complaint = new Complaint({
             userId: req.userId,
             title,
@@ -72,6 +87,7 @@ router.post('/', [
             category,
             priority: detectedPriority,
             attachmentUrl,
+            slaDuration: slaDuration,
             slaDeadline: calculateSLADeadline(detectedPriority, now)
         });
 
@@ -92,6 +108,31 @@ router.post('/', [
         // Log audit event
         await logComplaintCreated(req.userId, complaint, req);
 
+        // 🤖 Smart Auto-Assignment: assign to support agent with least workload
+        let assignedAgent = null;
+        try {
+            assignedAgent = await autoAssignComplaint(complaint);
+            if (assignedAgent) {
+                await complaint.populate('assignedTo', 'name email role');
+
+                // Log auto-assignment event as system comment
+                await new Comment({
+                    complaintId: complaint._id,
+                    senderId: req.userId,
+                    userId: req.userId,
+                    senderRole: 'SYSTEM',
+                    message: `Auto-assigned to ${assignedAgent.name} (least workload)`,
+                    text: `Auto-assigned to ${assignedAgent.name} (least workload)`,
+                    type: 'system'
+                }).save();
+
+                // 📧 Email support agent about new assignment
+                sendComplaintAssignedEmail(assignedAgent.email, complaint).catch(() => {});
+            }
+        } catch (autoAssignErr) {
+            console.warn('Auto-assign skipped:', autoAssignErr.message);
+        }
+
         // 🔔 Emit Socket.io event to notify ALL support staff of new complaint
         const io = req.app.get('io');
         if (io) {
@@ -101,13 +142,42 @@ router.post('/', [
                 priority: complaint.priority,
                 status: complaint.status,
                 userId: complaint.userId,
+                assignedTo: complaint.assignedTo || null,
                 createdAt: complaint.createdAt
             });
+
+            // Notify assigned agent via socket
+            if (assignedAgent) {
+                io.to(`user:${assignedAgent._id}`).emit('complaintAssigned', {
+                    complaintId: complaint._id,
+                    title: complaint.title,
+                    priority: complaint.priority,
+                    assignedAt: new Date().toISOString()
+                });
+            }
+        }
+
+        // 📧 Email support team about new complaint
+        try {
+            const supportUsers = await User.find({ role: 'SUPPORT' }).select('email');
+            const supportEmails = supportUsers.map(u => u.email).filter(Boolean);
+            await Promise.all(
+                supportEmails.map(email => sendSupportTeamNewComplaintEmail(email, complaint))
+            );
+        } catch (emailErr) {
+            console.warn('Support team email skipped:', emailErr.message);
+        }
+
+        // 📧 Email user confirmation
+        const userEmail = complaint.userId?.email || req.user?.email;
+        if (userEmail) {
+            sendComplaintCreatedEmail(userEmail, complaint, priorityDetection).catch(() => {});
         }
 
         res.status(201).json({
             message: 'Complaint created successfully',
             complaint,
+            autoAssigned: assignedAgent ? { name: assignedAgent.name, email: assignedAgent.email } : null,
             priorityDetection: {
                 detectedPriority: priorityDetection.priority,
                 detectionMethod: priorityDetection.detectedFrom,
@@ -239,11 +309,10 @@ router.get('/:id', verifyToken, async (req, res) => {
 });
 
 // @route   PUT /api/complaints/:id
-// @desc    Update complaint status with workflow validation (SUPPORT + ADMIN)
-// @access  Private (SUPPORT, ADMIN)
+// @desc    Update complaint status with workflow validation (USER, SUPPORT + ADMIN)
+// @access  Private (USER can update own, SUPPORT/ADMIN can update any)
 router.put('/:id', [
     verifyToken,
-    isSupport,
     body('status').optional().isIn(['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']).withMessage('Invalid status')
 ], async (req, res) => {
     try {
@@ -260,28 +329,32 @@ router.put('/:id', [
         }
 
         // Authorization check:
-        // - SUPPORT can only update complaints assigned to them OR unassigned complaints in queue
-        // - ADMIN can update any complaint
-        if (req.user.role === 'SUPPORT') {
-            const isAssignedToSupport = complaint.assignedTo?.toString() === req.userId;
-            const isUnassignedInQueue = !complaint.assignedTo && ['OPEN', 'ASSIGNED', 'ESCALATED'].includes(complaint.status);
-            
-            if (!isAssignedToSupport && !isUnassignedInQueue) {
-                return res.status(403).json({ message: 'Access denied - you can only update assigned or unassigned complaints in queue' });
+        // - USER can only update their own complaints
+        // - SUPPORT/ADMIN can update any complaint
+        const isPrivileged = ['ADMIN', 'SUPPORT'].includes(req.user.role);
+        if (req.user.role === 'USER') {
+            if (complaint.userId.toString() !== req.userId) {
+                return res.status(403).json({ message: 'Access denied - you can only update your own complaints' });
             }
+        } else if (!isPrivileged) {
+            return res.status(403).json({ message: 'Access denied' });
         }
 
         const oldStatus = complaint.status;
 
         // Validate status transition if status is being updated
         if (status && status !== oldStatus) {
-            if (!isValidStatusTransition(oldStatus, status)) {
+            if (!isPrivileged && !isValidStatusTransition(oldStatus, status)) {
                 const available = getAvailableTransitions(oldStatus);
                 return res.status(400).json({
                     message: `Invalid status transition from ${oldStatus}`,
                     currentStatus: oldStatus,
                     availableTransitions: available
                 });
+            }
+
+            if (status === 'CLOSED' && !complaint.completionProofUrl) {
+                return res.status(400).json({ message: 'Completion proof is required before closing the complaint' });
             }
 
             complaint.status = status;
@@ -352,6 +425,14 @@ router.put('/:id', [
                     updatedAt: new Date().toISOString()
                 });
             }
+
+            // 📧 Send email only when complaint is CLOSED
+            if (status === 'CLOSED') {
+                const ownerEmail = complaint.userId?.email;
+                if (ownerEmail) {
+                    sendComplaintClosedEmail(ownerEmail, complaint).catch(() => {});
+                }
+            }
         }
 
         res.json({
@@ -362,6 +443,55 @@ router.put('/:id', [
     } catch (error) {
         console.error('Update complaint error:', error);
         res.status(500).json({ message: 'Server error while updating complaint' });
+    }
+});
+
+// @route   POST /api/complaints/:id/proof
+// @desc    Upload completion proof image (SUPPORT/ADMIN)
+// @access  Private (SUPPORT, ADMIN)
+router.post('/:id/proof', [
+    verifyToken,
+    upload.single('proof')
+], async (req, res) => {
+    try {
+        if (!['SUPPORT', 'ADMIN'].includes(req.user.role)) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ message: 'Proof file is required' });
+        }
+
+        const complaint = await Complaint.findById(req.params.id);
+        if (!complaint) {
+            return res.status(404).json({ message: 'Complaint not found' });
+        }
+
+        const completionProofUrl = `/uploads/${req.file.filename}`;
+        complaint.completionProofUrl = completionProofUrl;
+        complaint.completionProofUploadedAt = Date.now();
+        complaint.completionProofUploadedBy = req.userId;
+
+        await complaint.save();
+        await complaint.populate(['userId', 'assignedTo'], 'name email role');
+
+        await new Comment({
+            complaintId: complaint._id,
+            senderId: req.userId,
+            userId: req.userId,
+            senderRole: req.user.role,
+            message: 'Completion proof uploaded',
+            text: 'Completion proof uploaded',
+            type: 'system'
+        }).save();
+
+        res.json({
+            message: 'Completion proof uploaded successfully',
+            complaint
+        });
+    } catch (error) {
+        console.error('Upload proof error:', error);
+        res.status(500).json({ message: 'Server error while uploading proof' });
     }
 });
 
@@ -690,6 +820,36 @@ router.post('/:id/comments', [
         // Log audit event
         await logCommentAdded(req.userId, req.params.id, complaint, comment, req);
 
+        // 🔔 Real-time: notify other party when a comment is added
+        const io = req.app.get('io');
+        if (io) {
+            // Determine who should receive the notification
+            // If sender is USER → notify assigned support
+            // If sender is SUPPORT/ADMIN → notify complaint owner
+            const recipients = [];
+
+            if (req.user.role === 'USER' && complaint.assignedTo) {
+                recipients.push(complaint.assignedTo.toString());
+            } else if (['SUPPORT', 'ADMIN'].includes(req.user.role)) {
+                recipients.push(complaint.userId.toString());
+            }
+
+            for (const recipientId of recipients) {
+                io.to(`user:${recipientId}`).emit('newComment', {
+                    complaintId: req.params.id,
+                    title: complaint.title,
+                    comment: {
+                        message: comment.message,
+                        senderName: comment.senderId?.name || req.user.name,
+                        senderRole: comment.senderRole,
+                        createdAt: comment.createdAt
+                    }
+                });
+            }
+
+            console.log(`💬 Emitted newComment for complaint ${req.params.id}`);
+        }
+
         res.status(201).json({ message: 'Comment added successfully', comment });
     } catch (error) {
         console.error('Add comment error:', error);
@@ -720,5 +880,261 @@ router.get('/priority-keywords', (req, res) => {
     }
 });
 
-module.exports = router;
+// ═══════════════════════════════════════════════════════════════
+// SLA & ESCALATION ENDPOINTS
+// ═══════════════════════════════════════════════════════════════
 
+// @route   GET /api/complaints/sla-breached
+// @desc    List all SLA-breached complaints (deadline passed, not resolved)
+// @access  Private (ADMIN, SUPPORT)
+router.get('/sla-breached', [verifyToken, isSupport], async (req, res) => {
+    try {
+        const now = new Date();
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
+
+        const query = {
+            status: { $nin: ['RESOLVED', 'CLOSED'] },
+            slaDeadline: { $lt: now }
+        };
+
+        // Support staff only see their assigned breached complaints
+        if (req.user.role === 'SUPPORT') {
+            query.$or = [
+                { assignedTo: req.userId },
+                { assignedTo: { $in: [null, undefined] } }
+            ];
+        }
+
+        // Optional priority filter
+        if (req.query.priority && req.query.priority !== 'ALL') {
+            query.priority = req.query.priority;
+        }
+
+        const total = await Complaint.countDocuments(query);
+        const complaints = await Complaint.find(query)
+            .populate('userId', 'name email')
+            .populate('assignedTo', 'name email role')
+            .sort({ slaDeadline: 1 }) // Most overdue first
+            .skip(skip)
+            .limit(limit);
+
+        // Add SLA info to each complaint
+        const complaintsWithSLA = complaints.map(c => {
+            const cObj = c.toObject();
+            const slaInfo = getTimeUntilSLADeadline(c);
+            return {
+                ...cObj,
+                slaInfo: {
+                    isOverdue: true,
+                    overdueDuration: slaInfo.overdueDuration,
+                    percentage: slaInfo.percentage,
+                    urgency: slaInfo.urgency
+                }
+            };
+        });
+
+        res.json({
+            message: 'SLA-breached complaints retrieved',
+            complaints: complaintsWithSLA,
+            pagination: { total, page, limit, totalPages: Math.ceil(total / limit) }
+        });
+    } catch (error) {
+        console.error('Get SLA-breached error:', error);
+        res.status(500).json({ message: 'Server error while fetching SLA-breached complaints' });
+    }
+});
+
+// @route   GET /api/complaints/escalated
+// @desc    List all escalated complaints
+// @access  Private (ADMIN, SUPPORT)
+router.get('/escalated', [verifyToken, isSupport], async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
+
+        const query = {
+            isEscalated: true,
+            status: { $nin: ['RESOLVED', 'CLOSED'] }
+        };
+
+        // Support staff only see their assigned escalated complaints
+        if (req.user.role === 'SUPPORT') {
+            query.assignedTo = req.userId;
+        }
+
+        // Optional escalation level filter
+        if (req.query.level) {
+            query.escalationLevel = parseInt(req.query.level);
+        }
+
+        // Optional priority filter
+        if (req.query.priority && req.query.priority !== 'ALL') {
+            query.priority = req.query.priority;
+        }
+
+        const total = await Complaint.countDocuments(query);
+        const complaints = await Complaint.find(query)
+            .populate('userId', 'name email')
+            .populate('assignedTo', 'name email role')
+            .populate('escalationHistory.previousAssignee', 'name email')
+            .populate('escalationHistory.newAssignee', 'name email')
+            .sort({ escalatedAt: -1 }) // Most recently escalated first
+            .skip(skip)
+            .limit(limit);
+
+        // Add SLA info
+        const complaintsWithSLA = complaints.map(c => {
+            const cObj = c.toObject();
+            const slaInfo = getTimeUntilSLADeadline(c);
+            return {
+                ...cObj,
+                slaInfo: {
+                    isOverdue: slaInfo.isOverdue,
+                    overdueDuration: slaInfo.overdueDuration || null,
+                    timeRemaining: slaInfo.timeRemaining || null,
+                    percentage: slaInfo.percentage,
+                    urgency: slaInfo.urgency
+                }
+            };
+        });
+
+        res.json({
+            message: 'Escalated complaints retrieved',
+            complaints: complaintsWithSLA,
+            pagination: { total, page, limit, totalPages: Math.ceil(total / limit) }
+        });
+    } catch (error) {
+        console.error('Get escalated complaints error:', error);
+        res.status(500).json({ message: 'Server error while fetching escalated complaints' });
+    }
+});
+
+// @route   GET /api/complaints/sla/definitions
+// @desc    Get SLA definitions and configuration
+// @access  Private
+router.get('/sla/definitions', verifyToken, (req, res) => {
+    res.json({
+        message: 'SLA definitions retrieved',
+        definitions: SLA_DEFINITIONS,
+        maxEscalationLevel: 3,
+        escalationSLAExtensionMinutes: 60
+    });
+});
+
+// @route   POST /api/complaints/:id/escalate
+// @desc    Manually escalate a complaint (ADMIN only)
+// @access  Private (ADMIN)
+// Manual escalation allows admins to escalate complaints immediately without waiting for SLA breach
+router.post('/:id/escalate', [
+    verifyToken,
+    isAdmin,
+    body('reason').optional().isString().trim(),
+    body('notes').optional().isString().trim()
+], async (req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ errors: errors.array() });
+        }
+
+        const { reason = 'MANUAL_ESCALATION', notes } = req.body;
+
+        const complaint = await Complaint.findById(req.params.id)
+            .populate('assignedTo', 'name email role')
+            .populate('userId', 'name email');
+
+        if (!complaint) {
+            return res.status(404).json({ message: 'Complaint not found' });
+        }
+
+        // Don't escalate if already resolved/closed
+        if (['RESOLVED', 'CLOSED'].includes(complaint.status)) {
+            return res.status(400).json({
+                message: 'Cannot escalate resolved or closed complaints',
+                currentStatus: complaint.status
+            });
+        }
+
+        // Check if at max escalation level
+        if (complaint.escalationLevel >= 3) {
+            return res.status(400).json({
+                message: 'Complaint has reached maximum escalation level',
+                currentLevel: complaint.escalationLevel,
+                maxLevel: 3
+            });
+        }
+
+        // Perform escalation
+        const escalatedComplaint = await escalateComplaint(req.params.id, {
+            reason,
+            escalatedBy: req.userId,
+            notes: notes || 'Manually escalated by admin',
+            req
+        });
+
+        if (!escalatedComplaint) {
+            return res.status(400).json({ message: 'Escalation failed - complaint may already be at max level' });
+        }
+
+        await escalatedComplaint.populate(['userId', 'assignedTo'], 'name email role');
+
+        // Log escalation as a comment
+        await new Comment({
+            complaintId: req.params.id,
+            senderId: req.userId,
+            userId: req.userId,
+            senderRole: 'ADMIN',
+            message: `🚨 MANUALLY ESCALATED to Level ${escalatedComplaint.escalationLevel}`,
+            text: `Admin ${req.user.name} manually escalated complaint to Level ${escalatedComplaint.escalationLevel}. Reason: ${reason}. ${notes ? 'Notes: ' + notes : ''}`,
+            type: 'escalation'
+        }).save();
+
+        // Real-time notification to new assignee
+        const io = req.app.get('io');
+        if (io) {
+            const newAssignee = escalatedComplaint.assignedTo;
+            if (newAssignee) {
+                io.to(`user:${newAssignee._id}`).emit('complaintEscalated', {
+                    complaintId: req.params.id,
+                    title: escalatedComplaint.title,
+                    priority: escalatedComplaint.priority,
+                    escalationLevel: escalatedComplaint.escalationLevel,
+                    escalatedAt: new Date().toISOString(),
+                    assignedTo: newAssignee.name,
+                    reason
+                });
+            }
+
+            // Broadcast escalation event
+            io.emit('complaint:escalated', {
+                _id: req.params.id,
+                title: escalatedComplaint.title,
+                priority: escalatedComplaint.priority,
+                escalationLevel: escalatedComplaint.escalationLevel,
+                status: escalatedComplaint.status,
+                assignedTo: escalatedComplaint.assignedTo,
+                escalatedAt: new Date().toISOString()
+            });
+        }
+
+        res.json({
+            message: 'Complaint escalated successfully',
+            complaint: escalatedComplaint,
+            escalationDetails: {
+                level: escalatedComplaint.escalationLevel,
+                priority: escalatedComplaint.priority,
+                assignedTo: escalatedComplaint.assignedTo,
+                reason,
+                escalatedAt: escalatedComplaint.escalatedAt
+            }
+        });
+    } catch (error) {
+        console.error('Manual escalation error:', error);
+        res.status(500).json({ message: 'Server error while escalating complaint', error: error.message });
+    }
+});
+
+module.exports = router;

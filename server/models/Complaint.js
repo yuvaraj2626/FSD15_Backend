@@ -48,6 +48,19 @@ const complaintSchema = new mongoose.Schema({
     attachmentUrl: {
         type: String,
         default: null
+    },
+    completionProofUrl: {
+        type: String,
+        default: null
+    },
+    completionProofUploadedAt: {
+        type: Date,
+        default: null
+    },
+    completionProofUploadedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null
     }
 });
 

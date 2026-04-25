@@ -2,9 +2,34 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { verifyToken, isAdmin } = require('../middleware/auth');
+
+// ── Token helpers ─────────────────────────────────────────────
+
+/**
+ * Generate a short-lived access token (15 minutes).
+ */
+function generateAccessToken(user) {
+    return jwt.sign(
+        { userId: user._id, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '15m' }
+    );
+}
+
+/**
+ * Generate a long-lived refresh token (7 days).
+ */
+function generateRefreshToken(user) {
+    return jwt.sign(
+        { userId: user._id, type: 'refresh' },
+        process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh',
+        { expiresIn: '7d' }
+    );
+}
 
 // @route   POST /api/auth/register
 // @desc    Register a new user (always creates USER role)
@@ -40,18 +65,18 @@ router.post('/register', [
             role: 'USER'
         });
 
-        await user.save();
+        // Generate tokens
+        const accessToken = generateAccessToken(user);
+        const refreshToken = generateRefreshToken(user);
 
-        // Create JWT token
-        const token = jwt.sign(
-            { userId: user._id, role: user.role },
-            process.env.JWT_SECRET,
-            { expiresIn: '7d' }
-        );
+        // Store hashed refresh token in DB
+        user.refreshToken = crypto.createHash('sha256').update(refreshToken).digest('hex');
+        await user.save();
 
         res.status(201).json({
             message: 'User registered successfully',
-            token,
+            token: accessToken,
+            refreshToken,
             user: {
                 id: user._id,
                 name: user.name,
@@ -100,16 +125,18 @@ router.post('/login', [
             return res.status(400).json({ message: 'Invalid credentials' });
         }
 
-        // Create JWT token
-        const token = jwt.sign(
-            { userId: user._id, role: user.role },
-            process.env.JWT_SECRET,
-            { expiresIn: '7d' }
-        );
+        // Generate tokens
+        const accessToken = generateAccessToken(user);
+        const refreshToken = generateRefreshToken(user);
+
+        // Store hashed refresh token in DB
+        user.refreshToken = crypto.createHash('sha256').update(refreshToken).digest('hex');
+        await user.save();
 
         res.json({
             message: 'Login successful',
-            token,
+            token: accessToken,
+            refreshToken,
             user: {
                 id: user._id,
                 name: user.name,
@@ -120,6 +147,80 @@ router.post('/login', [
     } catch (error) {
         console.error('Login error:', error);
         res.status(500).json({ message: 'Server error during login' });
+    }
+});
+
+// @route   POST /api/auth/refresh
+// @desc    Get new access token using refresh token
+// @access  Public (requires valid refresh token)
+router.post('/refresh', async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+
+        if (!refreshToken) {
+            return res.status(401).json({ message: 'Refresh token is required' });
+        }
+
+        // Verify the refresh token signature
+        let decoded;
+        try {
+            decoded = jwt.verify(
+                refreshToken,
+                process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh'
+            );
+        } catch (err) {
+            return res.status(401).json({ message: 'Invalid or expired refresh token' });
+        }
+
+        if (decoded.type !== 'refresh') {
+            return res.status(401).json({ message: 'Invalid token type' });
+        }
+
+        // Find user and verify stored hash matches
+        const user = await User.findById(decoded.userId);
+        if (!user) {
+            return res.status(401).json({ message: 'User not found' });
+        }
+
+        const hashedToken = crypto.createHash('sha256').update(refreshToken).digest('hex');
+        if (user.refreshToken !== hashedToken) {
+            // Possible token reuse attack — invalidate all tokens
+            user.refreshToken = null;
+            await user.save();
+            return res.status(401).json({ message: 'Refresh token has been revoked' });
+        }
+
+        // Rotate: issue new pair
+        const newAccessToken = generateAccessToken(user);
+        const newRefreshToken = generateRefreshToken(user);
+
+        user.refreshToken = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+        await user.save();
+
+        res.json({
+            token: newAccessToken,
+            refreshToken: newRefreshToken
+        });
+    } catch (error) {
+        console.error('Refresh token error:', error);
+        res.status(500).json({ message: 'Server error during token refresh' });
+    }
+});
+
+// @route   POST /api/auth/logout
+// @desc    Logout — invalidate refresh token
+// @access  Private
+router.post('/logout', verifyToken, async (req, res) => {
+    try {
+        const user = await User.findById(req.userId);
+        if (user) {
+            user.refreshToken = null;
+            await user.save();
+        }
+        res.json({ message: 'Logged out successfully' });
+    } catch (error) {
+        console.error('Logout error:', error);
+        res.status(500).json({ message: 'Server error during logout' });
     }
 });
 

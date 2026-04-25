@@ -18,7 +18,7 @@ const commentSchema = new mongoose.Schema({
     },
     senderRole: {
         type: String,
-        enum: ['USER', 'SUPPORT'],
+        enum: ['USER', 'SUPPORT', 'ADMIN'],
         required: true
     },
     message: {
@@ -37,12 +37,12 @@ const commentSchema = new mongoose.Schema({
     },
     oldStatus: {
         type: String,
-        enum: ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', null],
+        enum: ['OPEN', 'ASSIGNED', 'ESCALATED', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', null],
         default: null
     },
     newStatus: {
         type: String,
-        enum: ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', null],
+        enum: ['OPEN', 'ASSIGNED', 'ESCALATED', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', null],
         default: null
     }
 }, { timestamps: true });
