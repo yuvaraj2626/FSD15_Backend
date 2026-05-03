@@ -309,20 +309,11 @@ router.get('/:id', verifyToken, async (req, res) => {
 });
 
 // @route   PUT /api/complaints/:id
-<<<<<<< HEAD
 // @desc    Update complaint status with workflow validation (USER, SUPPORT + ADMIN)
 // @access  Private (USER can update own, SUPPORT/ADMIN can update any)
 router.put('/:id', [
     verifyToken,
     body('status').optional().isIn(['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']).withMessage('Invalid status')
-=======
-// @desc    Update complaint status (SUPPORT, ADMIN)
-// @access  Private (SUPPORT, ADMIN)
-router.put('/:id', [
-    auth,
-    authorize('SUPPORT', 'ADMIN'),
-    body('status').optional().isIn(['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']).withMessage('Invalid status')
->>>>>>> 169a221486ce8df1921ede9617f48c198f466304
 ], async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -351,7 +342,6 @@ router.put('/:id', [
 
         const oldStatus = complaint.status;
 
-<<<<<<< HEAD
         // Validate status transition if status is being updated
         if (status && status !== oldStatus) {
             if (!isPrivileged && !isValidStatusTransition(oldStatus, status)) {
@@ -367,12 +357,6 @@ router.put('/:id', [
                 return res.status(400).json({ message: 'Completion proof is required before closing the complaint' });
             }
 
-=======
-        if (status) {
-            if (status === 'CLOSED' && !complaint.completionProofUrl) {
-                return res.status(400).json({ message: 'Completion proof is required before closing the complaint' });
-            }
->>>>>>> 169a221486ce8df1921ede9617f48c198f466304
             complaint.status = status;
 
             // Set closedAt if transitioning to CLOSED
@@ -463,7 +447,6 @@ router.put('/:id', [
 });
 
 // @route   POST /api/complaints/:id/proof
-<<<<<<< HEAD
 // @desc    Upload completion proof image (SUPPORT/ADMIN)
 // @access  Private (SUPPORT, ADMIN)
 router.post('/:id/proof', [
@@ -475,16 +458,6 @@ router.post('/:id/proof', [
             return res.status(403).json({ message: 'Access denied' });
         }
 
-=======
-// @desc    Upload completion proof image (SUPPORT, ADMIN)
-// @access  Private (SUPPORT, ADMIN)
-router.post('/:id/proof', [
-    auth,
-    authorize('SUPPORT', 'ADMIN'),
-    upload.single('proof')
-], async (req, res) => {
-    try {
->>>>>>> 169a221486ce8df1921ede9617f48c198f466304
         if (!req.file) {
             return res.status(400).json({ message: 'Proof file is required' });
         }
@@ -500,12 +473,7 @@ router.post('/:id/proof', [
         complaint.completionProofUploadedBy = req.userId;
 
         await complaint.save();
-<<<<<<< HEAD
         await complaint.populate(['userId', 'assignedTo'], 'name email role');
-=======
-        await complaint.populate('userId', 'name email');
-        await complaint.populate('assignedTo', 'name email');
->>>>>>> 169a221486ce8df1921ede9617f48c198f466304
 
         await new Comment({
             complaintId: complaint._id,
