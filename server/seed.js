@@ -2,8 +2,6 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const User = require('./models/User');
-const Complaint = require('./models/Complaint');
-const Feedback = require('./models/Feedback');
 
 const seedDatabase = async () => {
     try {
@@ -14,90 +12,63 @@ const seedDatabase = async () => {
         });
         console.log('✅ Connected to MongoDB');
 
-        // Clear existing data
-        await User.deleteMany({});
-        await Complaint.deleteMany({});
-        await Feedback.deleteMany({});
-        console.log('🗑️  Cleared existing data');
+        // Clear only admin and support users
+        await User.deleteMany({ role: { $in: ['ADMIN', 'SUPPORT'] } });
+        console.log('🗑️  Cleared existing admin and support users');
 
-        // Create demo users
         const salt = await bcrypt.genSalt(10);
 
-        const demoUser = await User.create({
-            name: 'Demo User',
-            email: 'user@demo.com',
-            password: await bcrypt.hash('user123', salt),
-            role: 'USER'
+        // Create DEFAULT ADMIN
+        const adminUser = await User.create({
+            name: 'System Admin',
+            email: 'admin@organization.com',
+            password: await bcrypt.hash('Admin@123', salt),
+            role: 'ADMIN'
         });
 
-        const demoSupport = await User.create({
-            name: 'Demo Support',
-            email: 'support@demo.com',
-            password: await bcrypt.hash('support123', salt),
-            role: 'SUPPORT'
-        });
+        console.log('👤 Created DEFAULT ADMIN:');
+        console.log('   Email: admin@organization.com');
+        console.log('   Password: Admin@123');
+        console.log('   Role: ADMIN');
 
-        console.log('👥 Created demo users');
-        console.log('   User: user@demo.com / user123');
-        console.log('   Support: support@demo.com / support123');
+        // Create SUPPORT TEAM
+        const supportTeam = [
+            { name: 'Ramu Kumar', email: 'ramu@support.gmail.com', password: 'Support@123' },
+            { name: 'Priya Singh', email: 'priya@support.gmail.com', password: 'Support@123' },
+            { name: 'Arjun Patel', email: 'arjun@support.gmail.com', password: 'Support@123' },
+            { name: 'Divya Sharma', email: 'divya@support.gmail.com', password: 'Support@123' }
+        ];
+
+        const createdSupport = [];
+        for (const member of supportTeam) {
+            const supportUser = await User.create({
+                name: member.name,
+                email: member.email,
+                password: await bcrypt.hash(member.password, salt),
+                role: 'SUPPORT'
+            });
+            createdSupport.push(supportUser);
+        }
+
+        console.log('\n👥 Created SUPPORT TEAM:');
+        supportTeam.forEach((member, index) => {
+            console.log(`   ${index + 1}. ${member.name}`);
+            console.log(`      Email: ${member.email}`);
+            console.log(`      Password: ${member.password}`);
+        });
 
         // Create demo complaints
-        const complaint1 = await Complaint.create({
-            userId: demoUser._id,
-            title: 'Login Issue - Unable to access account',
-            description: 'I am unable to login to my account. The system shows "Invalid credentials" even though I am using the correct password.',
-            category: 'Technical',
-            priority: 'High',
-            status: 'OPEN'
-        });
-
-        const complaint2 = await Complaint.create({
-            userId: demoUser._id,
-            title: 'Billing discrepancy in last invoice',
-            description: 'There seems to be an error in my last invoice. I was charged twice for the same service.',
-            category: 'Billing',
-            priority: 'Critical',
-            status: 'IN_PROGRESS',
-            assignedTo: demoSupport._id
-        });
-
-        const complaint3 = await Complaint.create({
-            userId: demoUser._id,
-            title: 'Feature request - Dark mode',
-            description: 'It would be great to have a dark mode option for the application.',
-            category: 'Other',
-            priority: 'Low',
-            status: 'RESOLVED',
-            assignedTo: demoSupport._id
-        });
-
-        const complaint4 = await Complaint.create({
-            userId: demoUser._id,
-            title: 'Slow page loading',
-            description: 'The dashboard page takes too long to load. It takes more than 10 seconds.',
-            category: 'Technical',
-            priority: 'Medium',
-            status: 'CLOSED',
-            assignedTo: demoSupport._id,
-            closedAt: new Date()
-        });
-
-        console.log('📝 Created demo complaints');
-
-        // Create demo feedback for closed complaint
-        await Feedback.create({
-            complaintId: complaint4._id,
-            userId: demoUser._id,
-            rating: 5,
-            comment: 'The issue was resolved quickly and efficiently. Great support team!'
-        });
-
-        console.log('⭐ Created demo feedback');
-
         console.log('\n✅ Database seeded successfully!');
-        console.log('\n🎯 You can now login with:');
-        console.log('   USER: user@demo.com / user123');
-        console.log('   SUPPORT: support@demo.com / support123');
+        console.log('\n🎯 DEFAULT CREDENTIALS:');
+        console.log('\n   ADMIN Account:');
+        console.log('      Email: admin@organization.com');
+        console.log('      Password: Admin@123');
+        console.log('\n   SUPPORT TEAM (can login and manage complaints):');
+        supportTeam.forEach(member => {
+            console.log(`      - ${member.email} / ${member.password}`);
+        });
+        console.log('\n💡 NOTE: Any user can register themselves as USER role');
+        console.log('   Users can create complaints. Support team will manage them.');
 
         process.exit(0);
     } catch (error) {

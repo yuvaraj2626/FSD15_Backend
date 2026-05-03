@@ -1,8 +1,11 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-// Verify JWT token
-const auth = async (req, res, next) => {
+/**
+ * Middleware to verify JWT token
+ * Attaches user object to req.user
+ */
+const verifyToken = async (req, res, next) => {
     try {
         const token = req.header('Authorization')?.replace('Bearer ', '');
 
@@ -25,7 +28,47 @@ const auth = async (req, res, next) => {
     }
 };
 
-// Role-based authorization
+/**
+ * Middleware to check if user is ADMIN
+ * Must be used after verifyToken
+ */
+const isAdmin = (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({
+            message: 'Access denied. Admin privileges required.'
+        });
+    }
+
+    next();
+};
+
+/**
+ * Middleware to check if user is ADMIN or SUPPORT
+ * Must be used after verifyToken
+ */
+const isSupport = (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    if (!['ADMIN', 'SUPPORT'].includes(req.user.role)) {
+        return res.status(403).json({
+            message: 'Access denied. Support or Admin privileges required.'
+        });
+    }
+
+    next();
+};
+
+/**
+ * Middleware to check if user is a specific role
+ * Flexible authorization for multiple roles
+ * Usage: authorize(['USER', 'ADMIN'])(req, res, next)
+ */
 const authorize = (...roles) => {
     return (req, res, next) => {
         if (!req.user) {
@@ -42,4 +85,13 @@ const authorize = (...roles) => {
     };
 };
 
-module.exports = { auth, authorize };
+// Backward compatibility - auth now maps to verifyToken
+const auth = verifyToken;
+
+module.exports = { 
+    verifyToken,
+    isAdmin,
+    isSupport,
+    authorize,
+    auth // backward compatibility
+};

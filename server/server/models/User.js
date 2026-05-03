@@ -19,26 +19,10 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['USER', 'SUPPORT', 'ADMIN'],
+    enum: ['USER', 'SUPPORT'],
     default: 'USER'
   },
-  blocked: {
-    type: Boolean,
-    default: false
-  },
-  blockedReason: {
-    type: String,
-    default: null
-  },
-  refreshToken: {
-    type: String,
-    default: null
-  },
   createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
     type: Date,
     default: Date.now
   }

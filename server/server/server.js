@@ -5,13 +5,6 @@ const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
-const helmet = require('helmet');
-const xss = require('xss-clean');
-const mongoSanitize = require('express-mongo-sanitize');
-const hpp = require('hpp');
-const { initializeScheduler } = require('./scheduler/slaScheduler');
-const { captureAuditContext } = require('./middleware/auditMiddleware');
-const { apiLimiter, authLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 
@@ -24,22 +17,11 @@ const corsOptions = {
     optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// ── Security Middleware ──────────────────────────────────────
-app.use(helmet());                      // Set secure HTTP headers
-app.use(xss());                         // Sanitize user input against XSS
-app.use(mongoSanitize());               // Prevent NoSQL injection ($gt, $gte etc.)
-app.use(hpp());                         // Prevent HTTP parameter pollution
-app.use('/api', apiLimiter);            // General rate limiting on all /api routes
-app.use('/api/auth', authLimiter);      // Strict rate limiting on auth endpoints
 
 // Serve uploaded attachments
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// ── Audit Middleware ──────────────────────────────────────────
-app.use(captureAuditContext);
 
 // ── HTTP server + Socket.io ───────────────────────────────────
 const httpServer = http.createServer(app);
@@ -92,16 +74,7 @@ mongoose.connect(process.env.MONGODB_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true
 })
-    .then(() => {
-        console.log('✅ MongoDB Connected Successfully');
-
-        // Initialize SLA Scheduler
-        // Check for SLA violations at configured interval (default: 5 minutes)
-        const slaInterval = parseInt(process.env.SLA_CHECK_INTERVAL_MS) || 5 * 60 * 1000;
-        const slaScheduler = initializeScheduler(slaInterval);
-        slaScheduler.start();
-        console.log(`⏰ SLA Scheduler initialized (interval: ${(slaInterval / 60000).toFixed(1)} min)`);
-    })
+    .then(() => console.log('✅ MongoDB Connected Successfully'))
     .catch(err => {
         console.error('❌ MongoDB Connection Error:', err.message);
         process.exit(1);
@@ -113,8 +86,6 @@ app.use('/api/complaints', require('./routes/complaints'));
 app.use('/api/feedback', require('./routes/feedback'));
 app.use('/api/comments', require('./routes/comments'));
 app.use('/api/analytics', require('./routes/analytics'));
-app.use('/api/admin', require('./routes/admin'));
-app.use('/api/audit', require('./routes/audit'));
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -1,0 +1,191 @@
+# Analytics Dashboard - Visual Layout
+
+## Dashboard Structure
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    📊 Analytics Dashboard                            │
+│              Real-time insights into complaint management             │ 🔄 Refresh
+├─────────────────────────────────────────────────────────────────────┤
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                        TIER 1: CORE METRICS                          │
+├──────────────┬──────────────┬──────────────┬──────────────┬────────┬─┤
+│ 📋 Total     │ 🆕 Open      │ ⏳ In        │ ✅ Resolved  │ 👥     │ │
+│ Complaints   │              │ Progress     │ /Closed      │ Users  │ │
+│ 247          │ 23           │ 45           │ 179 (72%)    │ 156    │ │
+├──────────────┴──────────────┴──────────────┴──────────────┴────────┴─┤
+│ ⭐ Avg Rating │ ⏱️ Avg Resolution  │ 🎯 SLA Compliance  │ ⚠️ SLA Breach
+│ 4.3/5        │ 12h 30m             │ 83.33%             │ 16.67%
+│ (145 reviews)│ (48 resolved)       │ (40 met of 48)     │ (8 breached)
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                     TIER 2: CATEGORY ANALYSIS                        │
+├─────────────────────────────────────────────┬───────────────────────┤
+│                                             │                       │
+│  📂 Complaints by Category (Bar Chart)      │ 🔵 Status Breakdown   │
+│                                             │ (Doughnut)            │
+│  Technical         ████████████            │                       │
+│  Billing           ██████████              │   🔵 OPEN: 23         │
+│  Service           ████████                │   🟡 IN PROGRESS: 45  │
+│  Product           ██████                  │   🟢 RESOLVED: 145    │
+│  Other             ████                    │   🟢 CLOSED: 34       │
+│                                             │                       │
+├─────────────────────────────────────────────┴───────────────────────┤
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    TIER 3: TREND ANALYSIS                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  📈 Complaint Trend (Last 30 Days) - Line Chart                     │
+│                                                                       │
+│     10 ┤                    ╭╮                                        │
+│        │      ╭╮          ╭╯╰╮   ╭╮                                 │
+│      5 ┤   ╭╮╱╰╮╭╮     ╭╯   ╰╮╭╯╰╭╮  ╭╮  ╭╮                      │
+│        │  ╭╯╰╮  ╰╯╰╮   ╭╯     ╰╯   ╰╮╭╯╰╮╭╯╰╮                     │
+│      0 └───────────────────────────────────────                      │
+│        Mar17 Mar20 Mar23 Mar26 Mar29 Apr01 Apr04 Apr07 Apr10 Apr13  │
+│                                                                       │
+├─────────────────────────────────────────────────────────────────────┤
+
+┌──────────────────────────────┬──────────────────────────────────────┐
+│ 🚨 Priority Distribution     │ ⭐ Rating Distribution               │
+│ (Doughnut)                   │ (Bar Chart)                          │
+│                              │                                      │
+│  🔵 Low: 45 (18%)           │ 5⭐  ████████████████  87            │
+│  🟡 Med: 98 (40%)           │ 4⭐  ████████████     65              │
+│  🟠 High: 89 (36%)          │ 3⭐  ██████           42              │
+│  🔴 Critical: 15 (6%)       │ 2⭐  ███               18             │
+│                              │ 1⭐  ██                8              │
+└──────────────────────────────┴──────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                  TIER 4: STAFF PERFORMANCE [NEW]                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  👥 Support Staff Performance - Stacked Bar Chart                   │
+│                                                                       │
+│     John    ├──────────────── Resolved ──────────────┤ ──ₚₑₙ──┤   │
+│     Sarah   ├────────────── Resolved ─────────┤ ───ₚₑₙ─┤          │
+│     Mike    ├───────── Resolved ─────┤ ────────────ₚₑₙ──────┤      │
+│                                                                       │
+│  ┌─ Staff Details ────────────────────────────────────────────┐    │
+│  │ Name           Email              Assigned  Resolution Pnd  │    │
+│  ├────────────────────────────────────────────────────────────┤    │
+│  │ John Doe       john@company.com   24        83%       4    │    │
+│  │ Sarah Smith    sarah@company.com  22        77%       5    │    │
+│  │ Mike Johnson   mike@company.com   18        89%       2    │    │
+│  └────────────────────────────────────────────────────────────┘    │
+│                                                                       │
+├─────────────────────────────────────────────────────────────────────┤
+
+┌─────────────────────────────────────────────────────────────────────┐
+│               TIER 5: CATEGORY TRENDS [NEW]                          │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  📊 Category Trends (Last 30 Days) - Multi-line Chart              │
+│                                                                       │
+│     15 ┤                                    ╭╮                       │
+│        │  ╭──╮  ╭─╮ ╭╮        ╭╮      ╭╮ ╭╯╰╮                     │
+│     10 ┤╭╯    ╰╯  ╰╯╰╮╭──╮ ╭─╯╰──╮╭─╯╰╯╯   ╰╮                    │
+│        │╱            ╰╯   ╰╯      ╰╯          ╰╮                   │
+│      5 ┤                                        ╰─╯                   │
+│        │                                                             │
+│      0 └──────────────────────────────────────────────              │
+│        Mar17 Mar20 Mar23 Mar26 Mar29 Apr01 Apr04 Apr07 Apr10 Apr13 │
+│                                                                       │
+│        ─── Technical  ─── Billing  ─── Service  ─── Product  ─── Other
+│                                                                       │
+├─────────────────────────────────────────────────────────────────────┤
+
+┌──────────────────────────────┬──────────────────────────────────────┐
+│ 📋 SLA Breach by Priority    │ 📈 Resolution Time by Priority       │
+│ [NEW]                        │ [NEW]                                │
+│                              │                                      │
+│ 🔴 Critical                  │ 🔴 Critical                          │
+│ ███░░░░░░░░░░░░░░  12.5%     │ Avg: 2.3h (8 resolved)              │
+│ 12 breached of 96 total      │                                      │
+│                              │ 🟠 High                              │
+│ 🟠 High                      │ Avg: 8.5h (16 resolved)             │
+│ ██░░░░░░░░░░░░░░░  12.5%     │                                      │
+│ 2 breached of 16 total       │ 🟡 Medium                            │
+│                              │ Avg: 24.2h (18 resolved)            │
+│ 🟡 Medium                    │                                      │
+│ ███░░░░░░░░░░░░░░░ 16.67%    │ 🔵 Low                              │
+│ 3 breached of 18 total       │ Avg: 48.1h (6 resolved)             │
+│                              │                                      │
+│ 🔵 Low                       │                                      │
+│ ████░░░░░░░░░░░░░░ 33.33%    │                                      │
+│ 2 breached of 6 total        │                                      │
+└──────────────────────────────┴──────────────────────────────────────┘
+```
+
+## Metric Types
+
+### Stat Cards (KPI)
+- **Type**: Simple metric display
+- **Count**: 10 total (6 existing + 4 new)
+- **Layout**: Auto-responsive grid (4 columns on desktop)
+
+### Charts
+- **Bar Charts** (3): Category breakdown, Staff performance, Ratings
+- **Doughnut Charts** (2): Status breakdown, Priority distribution
+- **Line Charts** (2): Complaint trend, Category trends
+- **Progress Bars** (4): SLA breach by priority
+- **Tables** (2): Staff details, Resolution by priority
+
+### Total Sections
+1. KPI Cards (Top)
+2. Category Analysis (2 charts)
+3. Trend Analysis (1 chart)
+4. Status & Priority (2 charts)
+5. Staff Performance (1 chart + table)
+6. Category Trends (1 chart)
+7. SLA Analysis (2 card + 2 tables)
+
+**Total Visual Elements**: 20+
+
+## Responsive Design
+
+### Desktop (>1024px)
+- 4-column KPI grid
+- 2-column chart layout
+- Full-width detailed tables
+- All text readable
+
+### Tablet (768px - 1024px)
+- 2-column KPI grid
+- 1-column chart layout
+- Stacked tables
+- Optimized spacing
+
+### Mobile (<768px)
+- Single-column KPI grid
+- Single-column charts
+- Scrollable tables
+- Touch-friendly spacing
+
+## Color Scheme
+
+| Element | Color | Hex |
+|---------|-------|-----|
+| Primary | Purple | #7c3aed |
+| Critical | Red | #ef4444 |
+| High | Orange | #f97316 |
+| Medium | Amber | #f59e0b |
+| Low | Cyan | #06b6d4 |
+| Success | Green | #10b981 |
+| Warning | Yellow | #eab308 |
+| Resolved | Green | #22c55e |
+| In Progress | Amber | #f59e0b |
+| Open | Cyan | #06b6d4 |
+
+## Interactive Features
+
+- 🔄 Refresh button loads all 10 metrics in parallel
+- 📊 Charts are interactive (hover tooltips, click legend)
+- 📱 Responsive design adjusts to screen size
+- ♿ WCAG compliant with proper contrast ratios
+- ⚡ Fast load with Promise.all() parallel requests
+- 🌓 Dark theme optimized for low light viewing
